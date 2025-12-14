@@ -20,7 +20,7 @@
 
 SoundShift is a Windows desktop application that lets you quickly switch between audio output devices using keyboard shortcuts. Create groups of devices (e.g., "Gaming", "Music Production") and cycle through them instantly.
 
-![SoundShift Screenshot](https://raw.githubusercontent.com/peavers/sound-shift/master/website/public/screenshots/groups-page.png)
+![SoundShift Screenshot](https://raw.githubusercontent.com/peavers/sound-shift/refs/heads/master/website/public/screenshots/groups-page.png)
 
 ## Download
 
