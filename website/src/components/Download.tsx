@@ -1,4 +1,36 @@
+import { useState, useEffect } from "react";
+
+interface ReleaseInfo {
+  version: string;
+  downloadUrl: string;
+}
+
 export default function Download() {
+  const [release, setRelease] = useState<ReleaseInfo | null>(null);
+  const fallbackUrl = "https://github.com/peavers/sound-shift/releases";
+
+  useEffect(() => {
+    fetch("https://api.github.com/repos/peavers/sound-shift/releases/latest")
+      .then((res) => {
+        if (!res.ok) throw new Error("Failed to fetch release");
+        return res.json();
+      })
+      .then((data) => {
+        const msiAsset = data.assets?.find((a: { name: string }) =>
+          a.name.endsWith(".msi")
+        );
+        if (msiAsset) {
+          setRelease({
+            version: data.tag_name?.replace(/^v/, "") || data.name,
+            downloadUrl: msiAsset.browser_download_url,
+          });
+        }
+      })
+      .catch(() => {
+        // Silently fail - will use fallback URL
+      });
+  }, []);
+
   return (
     <section id="download" className="py-20 md:py-32 bg-surface-850">
       <div className="max-w-4xl mx-auto px-6 text-center">
@@ -17,7 +49,7 @@ export default function Download() {
 
           {/* Download Button */}
           <a
-            href="https://github.com/peavers/sound-shift/releases"
+            href={release?.downloadUrl || fallbackUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center justify-center gap-3 px-8 py-4 bg-primary-500 hover:bg-primary-400 text-surface-900 font-semibold text-lg rounded-xl transition-all shadow-glow hover:shadow-glow-lg"
@@ -37,7 +69,7 @@ export default function Download() {
               Windows 10+
             </span>
             <span className="hidden sm:inline text-surface-600">•</span>
-            <span>v0.1.0</span>
+            <span>v{release?.version || "0.1.0"}</span>
             <span className="hidden sm:inline text-surface-600">•</span>
             <span>Free & Open Source</span>
           </div>
