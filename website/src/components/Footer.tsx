@@ -20,7 +20,7 @@ export default function Footer() {
           {/* Links */}
           <div className="flex items-center gap-6">
             <a
-              href="https://github.com/yourusername/soundshift"
+              href="https://github.com/peavers/soundshift"
               target="_blank"
               rel="noopener noreferrer"
               className="text-sm text-surface-400 hover:text-surface-100 transition-colors"
@@ -28,7 +28,7 @@ export default function Footer() {
               GitHub
             </a>
             <a
-              href="https://github.com/yourusername/soundshift/releases"
+              href="https://github.com/peavers/soundshift/releases"
               target="_blank"
               rel="noopener noreferrer"
               className="text-sm text-surface-400 hover:text-surface-100 transition-colors"
@@ -36,7 +36,7 @@ export default function Footer() {
               Releases
             </a>
             <a
-              href="https://github.com/yourusername/soundshift/blob/main/LICENSE"
+              href="https://github.com/peavers/soundshift/blob/main/LICENSE"
               target="_blank"
               rel="noopener noreferrer"
               className="text-sm text-surface-400 hover:text-surface-100 transition-colors"

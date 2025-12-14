@@ -44,7 +44,7 @@ export default function Hero() {
                 Download for Windows
               </a>
               <a
-                href="https://github.com/yourusername/soundshift"
+                href="https://github.com/peavers/soundshift"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center justify-center gap-2 px-6 py-3.5 bg-surface-800 hover:bg-surface-750 border border-surface-700 text-surface-100 font-medium rounded-xl transition-all"
