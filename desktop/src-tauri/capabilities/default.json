@@ -25,9 +25,6 @@
     "store:allow-set",
     "store:allow-save",
     "store:allow-load",
-    "notification:default",
-    "updater:default",
-    "updater:allow-check",
-    "updater:allow-download-and-install"
+    "notification:default"
   ]
 }

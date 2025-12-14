@@ -47,11 +47,5 @@
       "timestampUrl": ""
     }
   },
-  "plugins": {
-    "updater": {
-      "endpoints": [
-        "https://github.com/peavers/sound-shift/releases/latest/download/latest.json"
-      ]
-    }
-  }
+  "plugins": {}
 }
