@@ -6,13 +6,16 @@ use std::sync::Mutex;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Emitter, Manager, RunEvent,
+    Emitter, Manager, RunEvent, WindowEvent,
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_store::StoreExt;
 
 use state::{AppSettings, AppState, DeviceGroup};
+
+// Store the device listener handle to keep it alive
+static DEVICE_LISTENER: std::sync::OnceLock<audio::DeviceListenerHandle> = std::sync::OnceLock::new();
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -27,6 +30,10 @@ pub fn run() {
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
                     if event.state == ShortcutState::Pressed {
+                        // Get online devices first
+                        let online_devices = audio::get_audio_devices().unwrap_or_default();
+                        let online_ids: Vec<&str> = online_devices.iter().map(|d| d.id.as_str()).collect();
+
                         let state = app.state::<Mutex<AppState>>();
                         let mut state = state.lock().unwrap();
 
@@ -39,26 +46,40 @@ pub fn run() {
                                     .map_or(false, |parsed| parsed == *shortcut)
                             })
                         }) {
-                            if !group.device_ids.is_empty() {
-                                // Cycle to next device
-                                group.current_index =
-                                    (group.current_index + 1) % group.device_ids.len();
-                                let device_id = group.device_ids[group.current_index].clone();
+                            if !group.devices.is_empty() {
+                                // Find online devices in this group
+                                let online_indices: Vec<usize> = group
+                                    .devices
+                                    .iter()
+                                    .enumerate()
+                                    .filter(|(_, d)| online_ids.contains(&d.id.as_str()))
+                                    .map(|(i, _)| i)
+                                    .collect();
+
+                                if online_indices.is_empty() {
+                                    return; // No online devices
+                                }
+
+                                // Find current position in online devices and cycle to next
+                                let current_online_pos = online_indices
+                                    .iter()
+                                    .position(|&i| i == group.current_index)
+                                    .unwrap_or(0);
+                                let next_online_pos = (current_online_pos + 1) % online_indices.len();
+                                group.current_index = online_indices[next_online_pos];
+
+                                let device = group.devices[group.current_index].clone();
 
                                 // Set as default
-                                if let Err(e) = audio::set_default_device(&device_id) {
+                                if let Err(e) = audio::set_default_device(&device.id) {
                                     eprintln!("Failed to set device: {}", e);
                                 } else {
-                                    // Get device name and show notification
-                                    if let Ok(devices) = audio::get_audio_devices() {
-                                        if let Some(device) = devices.iter().find(|d| d.id == device_id) {
-                                            let _ = app.notification()
-                                                .builder()
-                                                .title("Audio Device Switched")
-                                                .body(&device.name)
-                                                .show();
-                                        }
-                                    }
+                                    // Show notification
+                                    let _ = app.notification()
+                                        .builder()
+                                        .title("SoundShift")
+                                        .body(format!("Switched to {}", &device.name))
+                                        .show();
 
                                     // Emit event to notify frontend
                                     let _ = app.emit("device-switched", ());
@@ -162,6 +183,15 @@ pub fn run() {
                 }
             }
 
+            // Start device change listener
+            let app_handle = app.handle().clone();
+            if let Ok(listener) = audio::start_device_listener(move || {
+                // Emit event to frontend when devices change
+                let _ = app_handle.emit("devices-changed", ());
+            }) {
+                let _ = DEVICE_LISTENER.set(listener);
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -176,10 +206,26 @@ pub fn run() {
             commands::get_settings,
             commands::update_settings,
         ])
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                let app = window.app_handle();
+                let state = app.state::<Mutex<AppState>>();
+                let close_to_tray = {
+                    let state = state.lock().unwrap();
+                    state.settings.close_to_tray
+                };
+
+                if close_to_tray {
+                    // Prevent close and hide to tray instead
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
-            if let RunEvent::ExitRequested { api, .. } = event {
+            if let RunEvent::ExitRequested { .. } = event {
                 // Save state before exiting
                 let state = app_handle.state::<Mutex<AppState>>();
                 let state = state.lock().unwrap();
@@ -188,14 +234,6 @@ pub fn run() {
                     let _ = store.set("groups", serde_json::to_value(&state.groups).unwrap());
                     let _ = store.set("settings", serde_json::to_value(&state.settings).unwrap());
                     let _ = store.save();
-                }
-
-                // Prevent exit, minimize to tray instead
-                if state.settings.start_minimized {
-                    api.prevent_exit();
-                    if let Some(window) = app_handle.get_webview_window("main") {
-                        let _ = window.hide();
-                    }
                 }
             }
         });

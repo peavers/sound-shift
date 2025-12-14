@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { enable, disable, isEnabled } from "@tauri-apps/plugin-autostart";
-import { check } from "@tauri-apps/plugin-updater";
 import type { AppSettings } from "../types";
 import { isDemoMode, mockSettings } from "../mocks/demoData";
 
@@ -9,11 +8,9 @@ export default function SettingsPage() {
   const [settings, setSettings] = useState<AppSettings>({
     run_on_startup: false,
     start_minimized: false,
-    auto_update: true,
+    close_to_tray: true,
   });
   const [loading, setLoading] = useState(true);
-  const [checkingUpdate, setCheckingUpdate] = useState(false);
-  const [updateStatus, setUpdateStatus] = useState<string | null>(null);
 
   const fetchSettings = async () => {
     try {
@@ -65,32 +62,6 @@ export default function SettingsPage() {
       console.error("Failed to update setting:", e);
       // Revert on error
       fetchSettings();
-    }
-  };
-
-  const checkForUpdates = async () => {
-    try {
-      setCheckingUpdate(true);
-      setUpdateStatus(null);
-
-      // In demo mode, simulate check
-      if (isDemoMode()) {
-        await new Promise(r => setTimeout(r, 1000));
-        setUpdateStatus("You're running the latest version");
-        setCheckingUpdate(false);
-        return;
-      }
-
-      const update = await check();
-      if (update) {
-        setUpdateStatus(`Update available: v${update.version}`);
-      } else {
-        setUpdateStatus("You're running the latest version");
-      }
-    } catch (e) {
-      setUpdateStatus("Failed to check for updates");
-    } finally {
-      setCheckingUpdate(false);
     }
   };
 
@@ -155,42 +126,24 @@ export default function SettingsPage() {
               />
             </button>
           </div>
-        </div>
-
-        {/* Updates */}
-        <div className="bg-surface-850 rounded-2xl border border-surface-750 p-6 space-y-5">
-          <h3 className="text-base font-medium text-surface-100">Updates</h3>
 
           <div className="flex items-center justify-between py-1">
             <div>
-              <p className="text-surface-100 text-sm font-medium">Auto-update</p>
-              <p className="text-xs text-surface-500 mt-0.5">Automatically install updates when available</p>
+              <p className="text-surface-100 text-sm font-medium">Close to system tray</p>
+              <p className="text-xs text-surface-500 mt-0.5">Minimize to tray when closing the window instead of quitting</p>
             </div>
             <button
-              onClick={() => updateSetting("auto_update", !settings.auto_update)}
+              onClick={() => updateSetting("close_to_tray", !settings.close_to_tray)}
               className={`relative w-12 h-7 rounded-full transition-all duration-200 ${
-                settings.auto_update ? "bg-primary-500" : "bg-surface-700"
+                settings.close_to_tray ? "bg-primary-500" : "bg-surface-700"
               }`}
             >
               <span
                 className={`absolute top-1 left-1 w-5 h-5 bg-white rounded-full shadow-sm transition-all duration-200 ${
-                  settings.auto_update ? "translate-x-5" : ""
+                  settings.close_to_tray ? "translate-x-5" : ""
                 }`}
               />
             </button>
-          </div>
-
-          <div className="flex items-center gap-4">
-            <button
-              onClick={checkForUpdates}
-              disabled={checkingUpdate}
-              className="px-4 py-2 bg-surface-750 hover:bg-surface-700 disabled:opacity-50 rounded-xl transition-all duration-200 text-sm text-surface-300"
-            >
-              {checkingUpdate ? "Checking..." : "Check for updates"}
-            </button>
-            {updateStatus && (
-              <span className="text-sm text-surface-400">{updateStatus}</span>
-            )}
           </div>
         </div>
 

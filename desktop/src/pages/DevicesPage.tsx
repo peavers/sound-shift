@@ -44,13 +44,24 @@ export default function DevicesPage() {
   useEffect(() => {
     fetchDevices();
 
+    // Skip event listeners in demo mode (Tauri APIs not available in browser)
+    if (isDemoMode()) {
+      return;
+    }
+
     // Listen for device switches from keyboard shortcuts
-    const unlisten = listen("device-switched", () => {
+    const unlistenSwitch = listen("device-switched", () => {
+      fetchDevices();
+    });
+
+    // Listen for device connect/disconnect events
+    const unlistenDevices = listen("devices-changed", () => {
       fetchDevices();
     });
 
     return () => {
-      unlisten.then((fn) => fn());
+      unlistenSwitch.then((fn) => fn());
+      unlistenDevices.then((fn) => fn());
     };
   }, []);
 

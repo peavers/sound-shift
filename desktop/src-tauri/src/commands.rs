@@ -7,7 +7,7 @@ use uuid::Uuid;
 use tauri_plugin_notification::NotificationExt;
 
 use crate::audio;
-use crate::state::{AppSettings, AppState, AudioDevice, DeviceGroup};
+use crate::state::{AppSettings, AppState, AudioDevice, DeviceGroup, GroupDevice};
 
 #[tauri::command]
 pub fn get_audio_devices() -> Result<Vec<AudioDevice>, String> {
@@ -30,13 +30,13 @@ pub fn create_group(
     app: tauri::AppHandle,
     state: State<'_, Mutex<AppState>>,
     name: String,
-    device_ids: Vec<String>,
+    devices: Vec<GroupDevice>,
     shortcut: Option<String>,
 ) -> Result<DeviceGroup, String> {
     let group = DeviceGroup {
         id: Uuid::new_v4().to_string(),
         name,
-        device_ids,
+        devices,
         shortcut: shortcut.clone(),
         current_index: 0,
     };
@@ -140,6 +140,10 @@ pub fn cycle_group(
     state: State<'_, Mutex<AppState>>,
     group_id: String,
 ) -> Result<(), String> {
+    // Get online device IDs first
+    let online_devices = audio::get_audio_devices().unwrap_or_default();
+    let online_ids: Vec<&str> = online_devices.iter().map(|d| d.id.as_str()).collect();
+
     let mut state_guard = state.lock().unwrap();
 
     let group = state_guard
@@ -148,29 +152,44 @@ pub fn cycle_group(
         .find(|g| g.id == group_id)
         .ok_or("Group not found")?;
 
-    if group.device_ids.is_empty() {
+    if group.devices.is_empty() {
         return Err("Group has no devices".to_string());
     }
 
-    // Cycle to next device
-    group.current_index = (group.current_index + 1) % group.device_ids.len();
-    let device_id = group.device_ids[group.current_index].clone();
+    // Find online devices in this group
+    let online_indices: Vec<usize> = group
+        .devices
+        .iter()
+        .enumerate()
+        .filter(|(_, d)| online_ids.contains(&d.id.as_str()))
+        .map(|(i, _)| i)
+        .collect();
+
+    if online_indices.is_empty() {
+        return Err("No online devices in group".to_string());
+    }
+
+    // Find current position in online devices and cycle to next
+    let current_online_pos = online_indices
+        .iter()
+        .position(|&i| i == group.current_index)
+        .unwrap_or(0);
+    let next_online_pos = (current_online_pos + 1) % online_indices.len();
+    group.current_index = online_indices[next_online_pos];
+
+    let device = group.devices[group.current_index].clone();
 
     drop(state_guard);
 
     // Set as default device
-    audio::set_default_device(&device_id)?;
+    audio::set_default_device(&device.id)?;
 
-    // Show notification with device name
-    if let Ok(devices) = audio::get_audio_devices() {
-        if let Some(device) = devices.iter().find(|d| d.id == device_id) {
-            let _ = app.notification()
-                .builder()
-                .title("Audio Device Switched")
-                .body(&device.name)
-                .show();
-        }
-    }
+    // Show notification
+    let _ = app.notification()
+        .builder()
+        .title("SoundShift")
+        .body(format!("Switched to {}", &device.name))
+        .show();
 
     // Save to store
     save_groups(&app, &state)?;
@@ -185,6 +204,10 @@ pub fn select_group_device(
     group_id: String,
     device_index: usize,
 ) -> Result<(), String> {
+    // Check if device is online
+    let online_devices = audio::get_audio_devices().unwrap_or_default();
+    let online_ids: Vec<&str> = online_devices.iter().map(|d| d.id.as_str()).collect();
+
     let mut state_guard = state.lock().unwrap();
 
     let group = state_guard
@@ -193,29 +216,32 @@ pub fn select_group_device(
         .find(|g| g.id == group_id)
         .ok_or("Group not found")?;
 
-    if device_index >= group.device_ids.len() {
+    if device_index >= group.devices.len() {
         return Err("Invalid device index".to_string());
+    }
+
+    let device = &group.devices[device_index];
+
+    // Check if device is online
+    if !online_ids.contains(&device.id.as_str()) {
+        return Err("Device is offline".to_string());
     }
 
     // Set the selected device as current
     group.current_index = device_index;
-    let device_id = group.device_ids[device_index].clone();
+    let device = group.devices[device_index].clone();
 
     drop(state_guard);
 
     // Set as default device
-    audio::set_default_device(&device_id)?;
+    audio::set_default_device(&device.id)?;
 
-    // Show notification with device name
-    if let Ok(devices) = audio::get_audio_devices() {
-        if let Some(device) = devices.iter().find(|d| d.id == device_id) {
-            let _ = app.notification()
-                .builder()
-                .title("Audio Device Switched")
-                .body(&device.name)
-                .show();
-        }
-    }
+    // Show notification
+    let _ = app.notification()
+        .builder()
+        .title("SoundShift")
+        .body(format!("Switched to {}", &device.name))
+        .show();
 
     // Save to store
     save_groups(&app, &state)?;

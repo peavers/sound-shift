@@ -5,11 +5,17 @@ export interface AudioDevice {
   is_default: boolean;
 }
 
+// Device reference stored in a group (persists even when device is offline)
+export interface GroupDevice {
+  id: string;
+  name: string;
+}
+
 // Device group with shortcut
 export interface DeviceGroup {
   id: string;
   name: string;
-  device_ids: string[];
+  devices: GroupDevice[];
   shortcut: string | null;
   current_index: number;
 }
@@ -18,7 +24,7 @@ export interface DeviceGroup {
 export interface AppSettings {
   run_on_startup: boolean;
   start_minimized: boolean;
-  auto_update: boolean;
+  close_to_tray: boolean;
 }
 
 // Store schema

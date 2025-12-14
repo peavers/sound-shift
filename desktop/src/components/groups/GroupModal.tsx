@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { AudioDevice, DeviceGroup } from "../../types";
+import type { AudioDevice, DeviceGroup, GroupDevice } from "../../types";
 import ShortcutRecorder from "../shortcuts/ShortcutRecorder";
 
 interface GroupModalProps {
@@ -12,13 +12,16 @@ interface GroupModalProps {
 
 export default function GroupModal({ isOpen, onClose, onSave, devices, editingGroup }: GroupModalProps) {
   const [name, setName] = useState("");
-  const [selectedDevices, setSelectedDevices] = useState<string[]>([]);
+  const [selectedDevices, setSelectedDevices] = useState<GroupDevice[]>([]);
   const [shortcut, setShortcut] = useState<string | null>(null);
+
+  // Create a set of online device IDs for quick lookup
+  const onlineDeviceIds = new Set(devices.map(d => d.id));
 
   useEffect(() => {
     if (editingGroup) {
       setName(editingGroup.name);
-      setSelectedDevices(editingGroup.device_ids);
+      setSelectedDevices(editingGroup.devices);
       setShortcut(editingGroup.shortcut);
     } else {
       setName("");
@@ -34,17 +37,24 @@ export default function GroupModal({ isOpen, onClose, onSave, devices, editingGr
     onSave({
       id: editingGroup?.id,
       name: name.trim(),
-      device_ids: selectedDevices,
+      devices: selectedDevices,
       shortcut,
     });
   };
 
-  const toggleDevice = (deviceId: string) => {
-    setSelectedDevices((prev) =>
-      prev.includes(deviceId)
-        ? prev.filter((id) => id !== deviceId)
-        : [...prev, deviceId]
-    );
+  const toggleDevice = (device: AudioDevice) => {
+    setSelectedDevices((prev) => {
+      const exists = prev.some(d => d.id === device.id);
+      if (exists) {
+        return prev.filter(d => d.id !== device.id);
+      } else {
+        return [...prev, { id: device.id, name: device.name }];
+      }
+    });
+  };
+
+  const removeDevice = (deviceId: string) => {
+    setSelectedDevices((prev) => prev.filter(d => d.id !== deviceId));
   };
 
   const moveDevice = (index: number, direction: "up" | "down") => {
@@ -55,8 +65,6 @@ export default function GroupModal({ isOpen, onClose, onSave, devices, editingGr
     [newDevices[index], newDevices[newIndex]] = [newDevices[newIndex], newDevices[index]];
     setSelectedDevices(newDevices);
   };
-
-  const getDeviceName = (id: string) => devices.find(d => d.id === id)?.name || "Unknown";
 
   if (!isOpen) return null;
 
@@ -101,12 +109,12 @@ export default function GroupModal({ isOpen, onClose, onSave, devices, editingGr
             </label>
             <div className="space-y-1">
               {devices.map((device) => {
-                const isSelected = selectedDevices.includes(device.id);
+                const isSelected = selectedDevices.some(d => d.id === device.id);
                 return (
                   <button
                     key={device.id}
                     type="button"
-                    onClick={() => toggleDevice(device.id)}
+                    onClick={() => toggleDevice(device)}
                     className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-all duration-200 ${
                       isSelected
                         ? "bg-primary-500/10 text-surface-100"
@@ -140,41 +148,57 @@ export default function GroupModal({ isOpen, onClose, onSave, devices, editingGr
                 Cycle Order
               </label>
               <div className="bg-surface-800 rounded-xl p-2 space-y-1">
-                {selectedDevices.map((deviceId, index) => (
-                  <div
-                    key={deviceId}
-                    className="flex items-center gap-2 px-3 py-2 rounded-lg bg-surface-750"
-                  >
-                    <span className="w-6 h-6 rounded-md bg-surface-600 text-surface-300 text-xs font-medium flex items-center justify-center">
-                      {index + 1}
-                    </span>
-                    <span className="flex-1 text-sm text-surface-200 truncate">
-                      {getDeviceName(deviceId)}
-                    </span>
-                    <div className="flex items-center">
-                      <button
-                        type="button"
-                        onClick={() => moveDevice(index, "up")}
-                        disabled={index === 0}
-                        className="p-1.5 text-surface-400 hover:text-surface-100 disabled:opacity-20 disabled:hover:text-surface-400 transition-all"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
-                        </svg>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => moveDevice(index, "down")}
-                        disabled={index === selectedDevices.length - 1}
-                        className="p-1.5 text-surface-400 hover:text-surface-100 disabled:opacity-20 disabled:hover:text-surface-400 transition-all"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                        </svg>
-                      </button>
+                {selectedDevices.map((device, index) => {
+                  const isOnline = onlineDeviceIds.has(device.id);
+                  return (
+                    <div
+                      key={device.id}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-lg ${isOnline ? "bg-surface-750" : "bg-surface-750/50"}`}
+                    >
+                      <span className={`w-6 h-6 rounded-md text-xs font-medium flex items-center justify-center ${isOnline ? "bg-surface-600 text-surface-300" : "bg-surface-700 text-surface-500"}`}>
+                        {index + 1}
+                      </span>
+                      <span className={`flex-1 text-sm truncate ${isOnline ? "text-surface-200" : "text-surface-500"}`}>
+                        {device.name}
+                        {!isOnline && <span className="ml-2 text-xs text-surface-600">(Offline)</span>}
+                      </span>
+                      <div className="flex items-center">
+                        <button
+                          type="button"
+                          onClick={() => moveDevice(index, "up")}
+                          disabled={index === 0}
+                          className="p-1.5 text-surface-400 hover:text-surface-100 disabled:opacity-20 disabled:hover:text-surface-400 transition-all"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                          </svg>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => moveDevice(index, "down")}
+                          disabled={index === selectedDevices.length - 1}
+                          className="p-1.5 text-surface-400 hover:text-surface-100 disabled:opacity-20 disabled:hover:text-surface-400 transition-all"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                          </svg>
+                        </button>
+                        {!isOnline && (
+                          <button
+                            type="button"
+                            onClick={() => removeDevice(device.id)}
+                            className="p-1.5 text-surface-400 hover:text-danger-400 transition-all ml-1"
+                            title="Remove offline device"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
               <p className="text-xs text-surface-500 mt-2">
                 This is the order devices will cycle through

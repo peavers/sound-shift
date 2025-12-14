@@ -3,17 +3,20 @@ mod windows_audio {
     use crate::state::AudioDevice;
     use std::ffi::OsString;
     use std::os::windows::ffi::OsStringExt;
-    use windows::core::{GUID, HRESULT, PCWSTR};
+    use std::sync::mpsc;
+    use windows::core::{implement, GUID, HRESULT, PCWSTR};
     use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
     use windows::Win32::Media::Audio::{
         eConsole, eCommunications, eMultimedia, eRender, IMMDevice, IMMDeviceCollection,
-        IMMDeviceEnumerator, MMDeviceEnumerator, DEVICE_STATE_ACTIVE,
+        IMMDeviceEnumerator, IMMNotificationClient, IMMNotificationClient_Impl,
+        MMDeviceEnumerator, DEVICE_STATE, DEVICE_STATE_ACTIVE, EDataFlow, ERole,
     };
     use windows::Win32::System::Com::StructuredStorage::PropVariantToStringAlloc;
     use windows::Win32::System::Com::{
-        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_MULTITHREADED,
-        STGM_READ,
+        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_APARTMENTTHREADED,
+        COINIT_MULTITHREADED, STGM_READ,
     };
+    use windows::Win32::UI::Shell::PropertiesSystem::PROPERTYKEY;
 
     // IPolicyConfig COM interface GUIDs
     const CLSID_POLICY_CONFIG_CLIENT: GUID = GUID::from_u128(0x870af99c_171d_4f9e_af0d_e63df40c2bc9);
@@ -44,6 +47,133 @@ mod windows_audio {
     #[repr(C)]
     struct IPolicyConfigRaw {
         vtbl: *const IPolicyConfigVtbl,
+    }
+
+    // Device change notification callback
+    #[implement(IMMNotificationClient)]
+    pub struct DeviceNotificationClient {
+        sender: mpsc::Sender<()>,
+    }
+
+    impl DeviceNotificationClient {
+        pub fn new(sender: mpsc::Sender<()>) -> Self {
+            Self { sender }
+        }
+
+        fn notify(&self) {
+            let _ = self.sender.send(());
+        }
+    }
+
+    impl IMMNotificationClient_Impl for DeviceNotificationClient_Impl {
+        fn OnDeviceStateChanged(&self, _pwstrdeviceid: &PCWSTR, _dwnewstate: DEVICE_STATE) -> windows::core::Result<()> {
+            self.notify();
+            Ok(())
+        }
+
+        fn OnDeviceAdded(&self, _pwstrdeviceid: &PCWSTR) -> windows::core::Result<()> {
+            self.notify();
+            Ok(())
+        }
+
+        fn OnDeviceRemoved(&self, _pwstrdeviceid: &PCWSTR) -> windows::core::Result<()> {
+            self.notify();
+            Ok(())
+        }
+
+        fn OnDefaultDeviceChanged(&self, _flow: EDataFlow, _role: ERole, _pwstrdefaultdeviceid: &PCWSTR) -> windows::core::Result<()> {
+            self.notify();
+            Ok(())
+        }
+
+        fn OnPropertyValueChanged(&self, _pwstrdeviceid: &PCWSTR, _key: &PROPERTYKEY) -> windows::core::Result<()> {
+            // Don't notify on property changes to avoid spam
+            Ok(())
+        }
+    }
+
+    /// Starts listening for device changes and calls the callback when devices change
+    /// Returns a handle that keeps the listener alive - drop it to stop listening
+    pub fn start_device_listener<F>(callback: F) -> Result<DeviceListenerHandle, String>
+    where
+        F: Fn() + Send + 'static,
+    {
+        let (tx, rx) = mpsc::channel();
+
+        // Spawn a thread that will own the COM objects and process notifications
+        let listener_thread = std::thread::spawn(move || {
+            unsafe {
+                // Initialize COM on this thread with apartment threading
+                let hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+                if hr.is_err() {
+                    eprintln!("Failed to initialize COM for device listener: {:?}", hr);
+                    return;
+                }
+
+                // Create device enumerator
+                let enumerator: IMMDeviceEnumerator = match CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) {
+                    Ok(e) => e,
+                    Err(e) => {
+                        eprintln!("Failed to create device enumerator for listener: {}", e);
+                        CoUninitialize();
+                        return;
+                    }
+                };
+
+                // Create notification client
+                let (notify_tx, notify_rx) = mpsc::channel::<()>();
+                let client: IMMNotificationClient = DeviceNotificationClient::new(notify_tx).into();
+
+                // Register for notifications
+                if let Err(e) = enumerator.RegisterEndpointNotificationCallback(&client) {
+                    eprintln!("Failed to register notification callback: {}", e);
+                    CoUninitialize();
+                    return;
+                }
+
+                // Process notifications until we receive a stop signal
+                loop {
+                    // Check for stop signal (non-blocking)
+                    if rx.try_recv().is_ok() {
+                        break;
+                    }
+
+                    // Check for device change notifications (with timeout)
+                    if notify_rx.recv_timeout(std::time::Duration::from_millis(100)).is_ok() {
+                        // Debounce: wait a bit and drain any additional notifications
+                        std::thread::sleep(std::time::Duration::from_millis(200));
+                        while notify_rx.try_recv().is_ok() {}
+
+                        // Call the callback
+                        callback();
+                    }
+                }
+
+                // Cleanup
+                let _ = enumerator.UnregisterEndpointNotificationCallback(&client);
+                CoUninitialize();
+            }
+        });
+
+        Ok(DeviceListenerHandle {
+            stop_sender: tx,
+            thread: Some(listener_thread),
+        })
+    }
+
+    /// Handle to keep the device listener alive
+    pub struct DeviceListenerHandle {
+        stop_sender: mpsc::Sender<()>,
+        thread: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl Drop for DeviceListenerHandle {
+        fn drop(&mut self) {
+            let _ = self.stop_sender.send(());
+            if let Some(thread) = self.thread.take() {
+                let _ = thread.join();
+            }
+        }
     }
 
     pub fn get_audio_devices() -> Result<Vec<AudioDevice>, String> {
@@ -232,4 +362,15 @@ pub fn get_audio_devices() -> Result<Vec<crate::state::AudioDevice>, String> {
 #[cfg(not(windows))]
 pub fn set_default_device(_device_id: &str) -> Result<(), String> {
     Err("Setting default audio device is only supported on Windows".to_string())
+}
+
+#[cfg(not(windows))]
+pub struct DeviceListenerHandle;
+
+#[cfg(not(windows))]
+pub fn start_device_listener<F>(_callback: F) -> Result<DeviceListenerHandle, String>
+where
+    F: Fn() + Send + 'static,
+{
+    Err("Device listening is only supported on Windows".to_string())
 }

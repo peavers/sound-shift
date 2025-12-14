@@ -46,7 +46,7 @@ export default function GroupsPage() {
       if (group.id) {
         await invoke("update_group", { group: { ...group, current_index: editingGroup?.current_index ?? 0 } });
       } else {
-        await invoke("create_group", { name: group.name, deviceIds: group.device_ids, shortcut: group.shortcut });
+        await invoke("create_group", { name: group.name, devices: group.devices, shortcut: group.shortcut });
       }
       await fetchData();
       setModalOpen(false);
@@ -91,13 +91,24 @@ export default function GroupsPage() {
   useEffect(() => {
     fetchData();
 
+    // Skip event listener in demo mode (Tauri APIs not available in browser)
+    if (isDemoMode()) {
+      return;
+    }
+
     // Listen for device switches from keyboard shortcuts
-    const unlisten = listen("device-switched", () => {
+    const unlistenSwitch = listen("device-switched", () => {
+      fetchData();
+    });
+
+    // Listen for device connect/disconnect events
+    const unlistenDevices = listen("devices-changed", () => {
       fetchData();
     });
 
     return () => {
-      unlisten.then((fn) => fn());
+      unlistenSwitch.then((fn) => fn());
+      unlistenDevices.then((fn) => fn());
     };
   }, []);
 
@@ -154,7 +165,7 @@ export default function GroupsPage() {
             <GroupCard
               key={group.id}
               group={group}
-              devices={devices}
+              onlineDevices={devices}
               onEdit={() => handleEditGroup(group)}
               onDelete={() => handleDeleteGroup(group.id)}
               onCycle={() => handleCycleGroup(group.id)}

@@ -29,21 +29,31 @@ export const mockGroups: DeviceGroup[] = [
   {
     id: "grp-1",
     name: "Gaming",
-    device_ids: ["dev-2", "dev-1"],
+    devices: [
+      { id: "dev-2", name: "Headphones (HyperX Cloud II Wireless)" },
+      { id: "dev-1", name: "Speakers (Realtek High Definition Audio)" },
+    ],
     current_index: 0,
     shortcut: "Ctrl+Alt+G",
   },
   {
     id: "grp-2",
     name: "Music Production",
-    device_ids: ["dev-4", "dev-2"],
+    devices: [
+      { id: "dev-4", name: "Focusrite Scarlett 2i2 USB" },
+      { id: "dev-2", name: "Headphones (HyperX Cloud II Wireless)" },
+    ],
     current_index: 0,
     shortcut: "Ctrl+Alt+M",
   },
   {
     id: "grp-3",
     name: "Movies",
-    device_ids: ["dev-5", "dev-1"],
+    devices: [
+      { id: "dev-5", name: "LG TV (HDMI)" },
+      { id: "dev-1", name: "Speakers (Realtek High Definition Audio)" },
+      { id: "dev-offline", name: "Old USB Headset" }, // Offline device example
+    ],
     current_index: 0,
     shortcut: "Ctrl+Alt+V",
   },
@@ -53,5 +63,5 @@ export const mockGroups: DeviceGroup[] = [
 export const mockSettings: AppSettings = {
   run_on_startup: true,
   start_minimized: false,
-  auto_update: true,
+  close_to_tray: true,
 };
