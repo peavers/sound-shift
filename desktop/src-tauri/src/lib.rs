@@ -108,10 +108,18 @@ pub fn run() {
             let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
 
-            let _tray = TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
+            let tray_builder = TrayIconBuilder::new()
                 .menu(&menu)
-                .show_menu_on_left_click(false)
+                .show_menu_on_left_click(false);
+
+            // Use default window icon if available, otherwise tray will use system default
+            let tray_builder = if let Some(icon) = app.default_window_icon() {
+                tray_builder.icon(icon.clone())
+            } else {
+                tray_builder
+            };
+
+            let _tray = tray_builder
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => {
                         if let Some(window) = app.get_webview_window("main") {
@@ -140,16 +148,16 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // Check start minimized setting
+            // Check start minimized setting - hide window if user wants to start minimized
             let state = app.state::<Mutex<AppState>>();
             let start_minimized = {
                 let state = state.lock().unwrap();
                 state.settings.start_minimized
             };
 
-            if !start_minimized {
+            if start_minimized {
                 if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
+                    let _ = window.hide();
                 }
             }
 
