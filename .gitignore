@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+desktop/node_modules/
+website/node_modules/
+
+# Build outputs
+dist/
+desktop/dist/
+website/dist/
+desktop/src-tauri/target/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# Tauri generated
+desktop/src-tauri/gen/*
+desktop/src-tauri/target/*
+
+# Playwright MCP
+.playwright-mcp/
+
+# Claude Code (dev tool)
+.claude/
+CLAUDE.md

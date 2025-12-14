@@ -1,0 +1,382 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump_version:
+        description: 'Bump version before release?'
+        required: false
+        type: boolean
+        default: true
+      version_type:
+        description: 'Version bump type (if bump_version is true)'
+        required: false
+        type: choice
+        default: 'patch'
+        options:
+          - patch
+          - minor
+          - major
+
+env:
+  RUST_BACKTRACE: 1
+
+jobs:
+  bump-version:
+    if: github.event.inputs.bump_version == 'true'
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.bump.outputs.new_version }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump version
+        id: bump
+        run: |
+          # Get current version
+          CURRENT_VERSION=$(node -p "require('./desktop/package.json').version")
+          echo "Current version: $CURRENT_VERSION"
+
+          # Parse version components
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+
+          # Bump based on type
+          case "${{ github.event.inputs.version_type }}" in
+            major)
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+            minor)
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            patch)
+              PATCH=$((PATCH + 1))
+              ;;
+          esac
+
+          NEW_VERSION="$MAJOR.$MINOR.$PATCH"
+          echo "New version: $NEW_VERSION"
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+
+          # Update package.json
+          node -e "
+            const pkg = require('./desktop/package.json');
+            pkg.version = '$NEW_VERSION';
+            require('fs').writeFileSync('./desktop/package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+
+          # Update Cargo.toml
+          sed -i "s/^version = \".*\"/version = \"$NEW_VERSION\"/" desktop/src-tauri/Cargo.toml
+
+          # Update tauri.conf.json
+          node -e "
+            const conf = require('./desktop/src-tauri/tauri.conf.json');
+            conf.version = '$NEW_VERSION';
+            require('fs').writeFileSync('./desktop/src-tauri/tauri.conf.json', JSON.stringify(conf, null, 2) + '\n');
+          "
+
+      - name: Commit version bump
+        run: |
+          git add desktop/package.json desktop/src-tauri/Cargo.toml desktop/src-tauri/tauri.conf.json
+          git commit -m "chore: bump version to ${{ steps.bump.outputs.new_version }}"
+          git push
+
+  create-release:
+    needs: [bump-version]
+    if: always() && (needs.bump-version.result == 'success' || needs.bump-version.result == 'skipped')
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create-release.outputs.release_id }}
+      version: ${{ steps.get-version.outputs.version }}
+      upload_url: ${{ steps.create-release.outputs.upload_url }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Pull latest changes (if version was bumped)
+        if: needs.bump-version.result == 'success'
+        run: git pull
+
+      - name: Get version from package.json
+        id: get-version
+        run: |
+          VERSION=$(node -p "require('./desktop/package.json').version")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        id: create-release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const version = '${{ steps.get-version.outputs.version }}';
+
+            // Check if release already exists
+            try {
+              const existingRelease = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag: `v${version}`
+              });
+
+              console.log('Release already exists, using existing release');
+              core.setOutput('release_id', existingRelease.data.id);
+              core.setOutput('upload_url', existingRelease.data.upload_url);
+              return;
+            } catch (e) {
+              // Release doesn't exist, create it
+            }
+
+            const { data } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: `v${version}`,
+              name: `SoundShift v${version}`,
+              body: [
+                `## SoundShift v${version}`,
+                '',
+                '### What\'s New',
+                '- Bug fixes and improvements',
+                '',
+                '### Download',
+                `- **Windows**: \`SoundShift_${version}_x64_en-US.msi\``,
+                '',
+                '### Installation',
+                'Download and run the .msi installer.',
+                '',
+                '### Auto-Update',
+                'If you have an existing installation, the app will automatically notify you of this update.'
+              ].join('\n'),
+              draft: true,
+              prerelease: false
+            });
+
+            console.log('Created release with ID:', data.id);
+            core.setOutput('release_id', data.id);
+            core.setOutput('upload_url', data.upload_url);
+
+  build-windows:
+    needs: create-release
+    permissions:
+      contents: write
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Pull latest changes
+        run: git pull origin ${{ github.ref }}
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: './desktop/src-tauri -> target'
+          cache-targets: true
+          cache-on-failure: true
+          shared-key: windows-release
+
+      - name: Install frontend dependencies
+        working-directory: desktop
+        run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: desktop
+          args: --bundles msi
+
+      - name: Upload Release Assets
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            const releaseId = '${{ needs.create-release.outputs.release_id }}';
+            const version = '${{ needs.create-release.outputs.version }}';
+
+            // Find MSI files
+            function findFiles(dir, pattern) {
+              const results = [];
+              try {
+                const items = fs.readdirSync(dir, { withFileTypes: true });
+                for (const item of items) {
+                  const fullPath = path.join(dir, item.name);
+                  if (item.isDirectory()) {
+                    results.push(...findFiles(fullPath, pattern));
+                  } else if (pattern.test(item.name) && item.name.includes(version)) {
+                    results.push(fullPath);
+                  }
+                }
+              } catch (e) {
+                // Directory doesn't exist
+              }
+              return results;
+            }
+
+            const searchPaths = [
+              'desktop/src-tauri/target/release/bundle/msi',
+              'desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi'
+            ];
+
+            let artifacts = [];
+            for (const searchPath of searchPaths) {
+              artifacts = findFiles(searchPath, /\.(msi|sig)$/);
+              if (artifacts.length > 0) break;
+            }
+
+            console.log(`Found ${artifacts.length} artifacts:`, artifacts);
+
+            for (const artifactPath of artifacts) {
+              const fileName = path.basename(artifactPath);
+              const fileContent = fs.readFileSync(artifactPath);
+
+              console.log(`Uploading ${fileName}...`);
+
+              try {
+                await github.rest.repos.uploadReleaseAsset({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  release_id: parseInt(releaseId),
+                  name: fileName,
+                  data: fileContent,
+                  headers: {
+                    'content-type': 'application/octet-stream',
+                    'content-length': fileContent.length
+                  }
+                });
+                console.log(`Uploaded ${fileName}`);
+              } catch (error) {
+                if (error.status === 422) {
+                  console.log(`${fileName} already exists, skipping`);
+                } else {
+                  throw error;
+                }
+              }
+            }
+
+  publish-release:
+    needs: [create-release, build-windows]
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Publish release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const releaseId = '${{ needs.create-release.outputs.release_id }}';
+
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: parseInt(releaseId),
+              draft: false
+            });
+
+            console.log('Published release');
+
+      - name: Generate and upload latest.json
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const releaseId = '${{ needs.create-release.outputs.release_id }}';
+            const version = '${{ needs.create-release.outputs.version }}';
+
+            // Wait for assets to be available
+            await new Promise(r => setTimeout(r, 5000));
+
+            const release = await github.rest.repos.getRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: parseInt(releaseId)
+            });
+
+            console.log('Release assets:');
+            for (const asset of release.data.assets) {
+              console.log(`- ${asset.name}`);
+            }
+
+            // Find MSI and signature
+            const msiAsset = release.data.assets.find(a => a.name.endsWith('.msi'));
+            const sigAsset = release.data.assets.find(a => a.name.endsWith('.msi.sig'));
+
+            if (!msiAsset) {
+              throw new Error('MSI asset not found');
+            }
+
+            // Build latest.json for Tauri updater
+            const latestJson = {
+              version: version,
+              notes: `SoundShift v${version}`,
+              pub_date: new Date().toISOString(),
+              platforms: {
+                'windows-x86_64': {
+                  url: msiAsset.browser_download_url
+                }
+              }
+            };
+
+            // Add signature if available
+            if (sigAsset) {
+              try {
+                const sigResponse = await fetch(sigAsset.browser_download_url);
+                if (sigResponse.ok) {
+                  const signature = await sigResponse.text();
+                  latestJson.platforms['windows-x86_64'].signature = signature.trim();
+                }
+              } catch (e) {
+                console.log('Could not fetch signature:', e.message);
+              }
+            }
+
+            console.log('latest.json:', JSON.stringify(latestJson, null, 2));
+
+            // Upload latest.json
+            const content = JSON.stringify(latestJson, null, 2);
+
+            await github.rest.repos.uploadReleaseAsset({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: parseInt(releaseId),
+              name: 'latest.json',
+              data: Buffer.from(content),
+              headers: {
+                'content-type': 'application/json',
+                'content-length': content.length
+              }
+            });
+
+            console.log('Uploaded latest.json');
