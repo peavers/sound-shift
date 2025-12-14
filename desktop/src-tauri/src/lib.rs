@@ -8,7 +8,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager, RunEvent,
 };
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_store::StoreExt;
 
@@ -27,16 +27,18 @@ pub fn run() {
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
                     if event.state == ShortcutState::Pressed {
-                        let shortcut_str = format!("{}", shortcut);
                         let state = app.state::<Mutex<AppState>>();
                         let mut state = state.lock().unwrap();
 
                         // Find group with this shortcut and cycle
-                        if let Some(group) = state
-                            .groups
-                            .iter_mut()
-                            .find(|g| g.shortcut.as_ref() == Some(&shortcut_str))
-                        {
+                        // Compare by parsing stored shortcut string to handle format differences
+                        if let Some(group) = state.groups.iter_mut().find(|g| {
+                            g.shortcut.as_ref().map_or(false, |stored| {
+                                stored
+                                    .parse::<Shortcut>()
+                                    .map_or(false, |parsed| parsed == *shortcut)
+                            })
+                        }) {
                             if !group.device_ids.is_empty() {
                                 // Cycle to next device
                                 group.current_index =
