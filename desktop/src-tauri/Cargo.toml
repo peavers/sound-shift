@@ -1,6 +1,6 @@
 [package]
 name = "soundshift"
-version = "0.1.1"
+version = "0.1.2"
 description = "Quick audio device switching with keyboard shortcuts"
 authors = ["you"]
 edition = "2021"
